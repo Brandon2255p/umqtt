@@ -1,22 +1,22 @@
 /*
  * This file is part of umqtt.
- * 
+ *
  * umqtt is free softare: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
  * the Free Softare Foundation, either version 3 of the License, or
  * (at your option) any later version.
- * 
+ *
  * Foobar is distributed in the hope that it ill be useful,
  * but WITHOUT ANY WARRANTY; ithout even the implied arranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public License									    along ith Foobar.  If not, see http://gnu.org/licenses/
  * */
 
 #include <string.h>
-
-#include "umqtt/umqtt.h"
+#include "Debug.h"
+#include "umqtt.h"
 
 #define umqtt_insert_messageid(conn, ptr) \
 	do { \
@@ -128,13 +128,13 @@ void umqtt_init(struct umqtt_connection *conn)
 	conn->message_id = 1; /* Id 0 is reserved */
 }
 
-void umqtt_connect(struct umqtt_connection *conn, uint16_t kalive, char *cid)
+void umqtt_connect(struct umqtt_connection *conn, uint16_t kalive, char *cid, char *usrnm, char *passwd)
 {
-	int cidlen = strlen(cid);
+	int cidlen = strlen(cid), usrlen=strlen(usrnm), passwdlen=strlen(passwd), payloadlen=cidlen + usrlen + passwdlen;
 	uint8_t fixed;
 	uint8_t remlen[4];
 	uint8_t variable[12];
-	uint8_t payload[2 + cidlen];
+	uint8_t payload[6 + payloadlen];
 
 	fixed = umqtt_build_header(UMQTT_CONNECT, 0, 0, 0);
 
@@ -149,7 +149,7 @@ void umqtt_connect(struct umqtt_connection *conn, uint16_t kalive, char *cid)
 
 	variable[8] = 3; /* Protocol version */
 
-	variable[9] = 0b00000010; /* Clean session flag */
+	variable[9] = 0b11000010; /* Clean session flag */
 
 	variable[10] = kalive >> 8; /* Keep Alive timer */
 	variable[11] = kalive & 0xff;
@@ -158,9 +158,16 @@ void umqtt_connect(struct umqtt_connection *conn, uint16_t kalive, char *cid)
 	payload[1] = cidlen & 0xff;
 	memcpy(&payload[2], cid, cidlen);
 
+	payload[2+cidlen] = usrlen >> 8;
+	payload[3+cidlen] = usrlen & 0xff;
+    memcpy(&payload[4+cidlen], usrnm, usrlen);
+
+    payload[14] = 0;
+	payload[15] = 3;
+    memcpy(&payload[16],passwd, 3);
+
 	umqtt_circ_push(&conn->txbuff, &fixed, 1);
-	umqtt_circ_push(&conn->txbuff, remlen,
-			umqtt_encode_length(sizeof(variable) + sizeof(payload), remlen));
+	umqtt_circ_push(&conn->txbuff, remlen, umqtt_encode_length(sizeof(variable) + sizeof(payload), remlen));
 	umqtt_circ_push(&conn->txbuff, variable, sizeof(variable));
 	umqtt_circ_push(&conn->txbuff, payload, sizeof(payload));
 
@@ -185,8 +192,7 @@ void umqtt_subscribe(struct umqtt_connection *conn, char *topic)
 	payload[2 + topiclen] = 0; /* QoS */
 
 	umqtt_circ_push(&conn->txbuff, &fixed, 1);
-	umqtt_circ_push(&conn->txbuff, remlen,
-			umqtt_encode_length(sizeof(messageid) + sizeof(payload), remlen));
+	umqtt_circ_push(&conn->txbuff, remlen, umqtt_encode_length(sizeof(messageid) + sizeof(payload), remlen));
 	umqtt_circ_push(&conn->txbuff, messageid, sizeof(messageid));
 	umqtt_circ_push(&conn->txbuff, payload, sizeof(payload));
 
@@ -221,6 +227,13 @@ void umqtt_ping(struct umqtt_connection *conn)
 
 	umqtt_circ_push(&conn->txbuff, packet, sizeof(packet));
 	conn->nack_ping++;
+}
+
+void umqtt_disconnect(struct umqtt_connection *conn)
+{
+	uint8_t packet[] = { umqtt_build_header(UMQTT_DISCONNECT, 0, 0, 0), 0 };
+
+	umqtt_circ_push(&conn->txbuff, packet, sizeof(packet));
 }
 
 static void umqtt_handle_publish(struct umqtt_connection *conn,
